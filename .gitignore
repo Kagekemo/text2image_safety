@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Ignore results
+results/
+pipeline_requests.csv
+
+# Ignore figure folder
+figure/
+
+# Ignore Python cache files
+__pycache__/

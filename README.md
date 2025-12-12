@@ -4,8 +4,30 @@ This if the official implementation for paper: [SneakyPrompt: Jailbreaking Text-
 
 Our work has been reported by [MIT Technology Review](https://www.technologyreview.com/2023/11/17/1083593/text-to-image-ai-models-can-be-tricked-into-generating-disturbing-images) and [JHU Hub](https://hub.jhu.edu/2023/11/01/nsfw-ai/). Please check them out if interested.
 
-
 ## Environment setup
+
+### For Mac with Apple Silicon (M1/M2/M3)
+
+The project now supports Mac MPS (Metal Performance Shaders) for Apple Silicon devices. 
+
+**Quick Setup (Recommended for Mac):**
+```bash
+# 使用我们提供的 Mac 安装脚本
+./install_mac_mps.sh
+
+# 或者手动安装
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install diffusers transformers accelerate safetensors
+pip install pillow torchmetrics pandas numpy scipy tensorflow
+pip install scikit-learn scikit-image matplotlib seaborn requests tqdm
+```
+
+**检查设备支持:**
+```bash
+python device_utils.py
+```
+
+### For Linux/Windows with CUDA
 
 The experiment is run on Ubuntu 18.04, with one Nvidia 3090 GPU (24G). Please install the dependencies via:
 
@@ -18,6 +40,20 @@ For testing only the SneakyPrompt (without testing the baselines) with minimum r
 ``pip install transformers==4.27.4 accelerate==0.18.0 sentencepiece==0.1.97 einops==0.7.0 triton==2.1.0 diffusers==0.29.2 numpy==1.26.0 xformers==0.0.22.post7 tensorflow==2.8.3 pandas pillow scikit-learn protobuf torchmetrics matplotlib``
 
 ``pip install git+https://github.com/openai/CLIP.git``
+
+### 设备支持说明
+
+项目现在支持以下设备：
+- **Mac Apple Silicon (M1/M2/M3)** - 使用 MPS 后端
+- **NVIDIA GPU** - 使用 CUDA 后端  
+- **CPU** - 通用 CPU 后端
+
+设备会自动检测并选择最优的计算后端。运行时会看到设备信息输出。
+
+**注意事项:**
+- MPS 后端在某些操作上可能有限制，如遇到错误会自动回退到 CPU
+- MPS 推荐使用 float32 精度而不是 float16
+- 首次运行时可能需要下载模型，请确保网络连接良好
 
 
 ## Dataset

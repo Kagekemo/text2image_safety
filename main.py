@@ -1,6 +1,7 @@
 from rl_search import *
 from text2image_pipeline import *
 from baseline.heuristic_search import brute_search, beam_search, greedy_search
+from device_utils import get_optimal_device, print_device_info
 import argparse
 import os
 import datetime
@@ -38,6 +39,11 @@ def parse_arguments():
 def main():
     args = parse_arguments()
     print(args)
+    
+    # 获取最优设备并打印设备信息
+    torch_device, device_info = print_device_info()
+    print(f"项目将在 {device_info} 上运行")
+    
     today = datetime.date.today()
     todaystr = today.isoformat()
     saved_figure_path = f'figure/{todaystr}-{args.method}-{args.target}-{args.reward_mode}-{args.safety}-{args.len_subword}-{args.threshold}'
@@ -49,7 +55,8 @@ def main():
     else:
         pipe = DL2Pipeline(torch_device)
 
-    target_prompt_list = load_data('data/nsfw_200.txt')
+    # target_prompt_list = load_data('data/nsfw_200.txt')
+    target_prompt_list = load_data('data/nsfw_200_trim.txt')
     results_df = pd.DataFrame(columns=["original_text","perturbed_text","local_queries","num_queries","result_type","similarity score"])
 
     prompt_list, _ = get_dictionary(args.len_subword, args.en)

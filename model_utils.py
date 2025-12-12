@@ -7,7 +7,16 @@ Weights can be downloaded from the above link and change the name to 'animal_mod
 import torch
 import torch.nn as nn
 
-torch_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# 支持Mac MPS、CUDA和CPU的设备检测
+def get_device():
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    elif torch.cuda.is_available():
+        return torch.device("cuda")
+    else:
+        return torch.device("cpu")
+
+torch_device = get_device()
 
 class MyModel(nn.Module):
     def __init__(self):
