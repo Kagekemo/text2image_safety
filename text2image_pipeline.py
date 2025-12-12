@@ -9,18 +9,44 @@ from PIL import Image
 import torchvision.transforms as transforms
 import re, string
 from model_utils import *
+import csv
+from datetime import datetime
+from logging_utils import SafetyLogger
 
 class SDPipeline():
     def __init__(self, device, mode="ti_sd", fix_seed=False):
         self.device = device
         self.fix_seed = fix_seed
+        
+        # 根据设备类型设置生成器
         if self.fix_seed==True:
-            self.g_cuda = torch.Generator(device='cuda')
-            self.g_cuda.manual_seed(0)
-        else: self.g_cuda = None
+            if device.type == 'mps':
+                # MPS 不支持 Generator，使用全局种子
+                torch.manual_seed(0)
+                self.g_cuda = None
+            elif device.type == 'cuda':
+                self.g_cuda = torch.Generator(device='cuda')
+                self.g_cuda.manual_seed(0)
+            else:
+                self.g_cuda = torch.Generator(device='cpu')
+                self.g_cuda.manual_seed(0)
+        else: 
+            self.g_cuda = None
+        
         self.mode = mode
-        self.model = StableDiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4", use_auth_token=True,
-                                                             torch_dtype=torch.float16).to(device)
+        
+        # 初始化安全日志记录器
+        self.safety_logger = SafetyLogger(device=device)
+        
+        # 根据设备类型设置数据类型
+        if device.type == 'mps':
+            # MPS 在某些情况下对 float16 支持有限，使用 float32
+            torch_dtype = torch.float32
+        else:
+            torch_dtype = torch.float16
+            
+        self.model = StableDiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4", 
+                                                             torch_dtype=torch_dtype).to(device)
         self.model.scheduler = LMSDiscreteScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear",
                                                     num_train_timesteps=1000)
         if self.mode == "ti_sd":
@@ -40,16 +66,31 @@ class SDPipeline():
     @torch.no_grad()
     def __call__(self, text_inputs):
         if self.fix_seed == True:
-            self.g_cuda.manual_seed(0)
+            if self.device.type == 'mps':
+                # MPS 使用全局种子
+                torch.manual_seed(0)
+                self.g_cuda = None
+            elif self.g_cuda is not None:
+                self.g_cuda.manual_seed(0)
         else:
             self.g_cuda = None
+            
         latents, _ = self.model(text_inputs, output_type="latent",num_inference_steps=100, generator=self.g_cuda, return_dict=False)
-        images_numpy= self.model.decode_latents(latents)
+        # 使用新的VaeImageProcessor API替代弃用的decode_latents
+        images_numpy = self.model.vae.decode(latents / self.model.vae.config.scaling_factor, return_dict=False)[0]
+        images_numpy = (images_numpy / 2 + 0.5).clamp(0, 1)
+        images_numpy = images_numpy.cpu().permute(0, 2, 3, 1).float().numpy()
         pil_images = self.model.numpy_to_pil(images_numpy)
         transform = transforms.ToTensor()
         images_tensor = transform(pil_images[0]).unsqueeze(0).to(self.device)
         # images = self.model.feature_extractor(pil_images, return_tensors="pt").pixel_values.to(self.device)
-        images = self.model.feature_extractor(pil_images, return_tensors="pt").pixel_values.half().to(self.device)
+        
+        # 根据设备类型调整数据类型
+        if self.device.type == 'mps':
+            images = self.model.feature_extractor(pil_images, return_tensors="pt").pixel_values.float().to(self.device)
+        else:
+            images = self.model.feature_extractor(pil_images, return_tensors="pt").pixel_values.half().to(self.device)
+            
         pooled_outputs = self.model.safety_checker.vision_model(images)[1]
         images_embed = self.model.safety_checker.visual_projection(pooled_outputs)
 
@@ -65,7 +106,14 @@ class SDPipeline():
         else:
             check_object = pil_images
 
-        return self._check(check_object), images_tensor, pil_images
+        nsfw_result = self._check(check_object)
+        # 日志记录
+        try:
+            prompt_value = text_inputs[0] if isinstance(text_inputs, (list, tuple)) and len(text_inputs) > 0 else str(text_inputs)
+            self.safety_logger.log_request(prompt=prompt_value, pil_image=pil_images[0], nsfw_result_bool=nsfw_result)
+        except Exception as e:
+            print(f"[log warning] {e}")
+        return nsfw_result, images_tensor, pil_images
 
     def base_check(self, images_embed):
         special_cos_dist = self.cosine_distance(images_embed, self.model.safety_checker.special_care_embeds)

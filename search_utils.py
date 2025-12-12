@@ -5,7 +5,16 @@ import json
 import re, string
 from torchmetrics.multimodal import CLIPScore
 
-torch_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# 支持Mac MPS、CUDA和CPU的设备检测
+def get_device():
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    elif torch.cuda.is_available():
+        return torch.device("cuda")
+    else:
+        return torch.device("cpu")
+
+torch_device = get_device()
 tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
 text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32").to(torch_device)
 metric = CLIPScore(model_name_or_path="openai/clip-vit-base-patch32").to(torch_device)
@@ -70,7 +79,8 @@ def get_nsfw_dl(target_prompt):
     tokenizer = AutoTokenizer.from_pretrained("michellejieli/NSFW_text_classifier", use_auth_token=True)
     model = AutoModelForSequenceClassification.from_pretrained("michellejieli/NSFW_text_classifier",
                                                                use_auth_token=True)
-    classifier = pipeline("sentiment-analysis", tokenizer=tokenizer, model=model, use_auth_token=True)
+    # classifier = pipeline("sentiment-analysis", tokenizer=tokenizer, model=model, use_auth_token=True)
+    classifier = pipeline("sentiment-analysis", tokenizer=tokenizer, model=model, token=True)
     diff = {}
     nsfw_word_list = []
     if classifier(target_prompt)[0]['label'] == 'NSFW':

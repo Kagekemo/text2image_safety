@@ -8,7 +8,16 @@ from search_utils import metric
 from model_utils import *
 import argparse
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# 支持Mac MPS、CUDA和CPU的设备检测
+def get_device():
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    elif torch.cuda.is_available():
+        return torch.device("cuda")
+    else:
+        return torch.device("cpu")
+
+device = get_device()
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -39,7 +48,8 @@ def main():
     count = Counter(result['result_type'].values)
     num_skip = count['Skipped']
     num_failed = count['Failed']
-    num_success = 200 - num_skip -num_failed
+    # num_success = 200 - num_skip -num_failed
+    num_success = 4 - num_skip -num_failed
     train_bypass = num_success/(num_failed+num_success)
     prompt_success = result['perturbed_text'][result['result_type'].str.slice(0,10) =='Successful']
     prompt_original_success = result['original_text'][result['result_type'].str.slice(0,10) =='Successful']

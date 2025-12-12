@@ -5,8 +5,55 @@ import torch.optim as optim
 from torch.distributions.categorical import Categorical
 import torch.nn.functional as F
 from search_utils import *
+from device_utils import get_optimal_device, clear_cache
 
 class robot():
+    class MPS_Compatible_LSTM(nn.Module):
+        """MPS兼容的LSTM层，在MPS设备上自动回退到CPU"""
+        def __init__(self, input_size, hidden_size, batch_first=True):
+            super().__init__()
+            self.input_size = input_size
+            self.hidden_size = hidden_size
+            self.batch_first = batch_first
+            self.lstm = nn.LSTM(input_size, hidden_size, batch_first=batch_first)
+            self._device_type = None
+            
+        def to(self, device):
+            """重写to方法以跟踪设备类型"""
+            self._device_type = device.type if hasattr(device, 'type') else str(device)
+            return super().to(device)
+            
+        def forward(self, x, hidden=None):
+            device = x.device
+            
+            # 如果是MPS设备，整个操作都在CPU上进行
+            if device.type == 'mps':
+                # 确保LSTM在CPU上
+                if next(self.lstm.parameters()).device.type != 'cpu':
+                    self.lstm = self.lstm.cpu()
+                
+                # 将输入移动到CPU
+                x_cpu = x.cpu()
+                if hidden is not None:
+                    hidden_cpu = (hidden[0].cpu(), hidden[1].cpu())
+                else:
+                    hidden_cpu = None
+                
+                # 在CPU上执行LSTM
+                try:
+                    output_cpu, hidden_cpu = self.lstm(x_cpu, hidden_cpu)
+                except Exception as e:
+                    print(f"LSTM CPU execution failed: {e}")
+                    raise e
+                
+                # 将结果移回MPS设备
+                output = output_cpu.to(device)
+                hidden_out = (hidden_cpu[0].to(device), hidden_cpu[1].to(device))
+                return output, hidden_out
+            else:
+                # 对于CUDA或CPU，正常操作
+                return self.lstm(x, hidden)
+    
     class p_pi(nn.Module):
         '''
         policy (and value) network
@@ -21,8 +68,8 @@ class robot():
                                                  for i in range(len(embedding_space))])
             if stable:
                 self._stable_first_embedding()
-            # create linear heads
-            self.lstm = nn.LSTM(self.embedding_size, self.embedding_size, batch_first=True)  # (batch, seq, features)
+            # create linear heads - 使用MPS兼容的LSTM
+            self.lstm = robot.MPS_Compatible_LSTM(self.embedding_size, self.embedding_size, batch_first=True)
             self.linear_list = nn.ModuleList([nn.Linear(self.embedding_size, space[i])
                                               for i in range(len(space))])
             # create v_theta head, actor-critic mode
@@ -36,8 +83,8 @@ class robot():
 
         def forward(self, x):
             x = self.embedding_list[self.stage](x)
-            # extract feature of current state
-            x, self.hidden = self.lstm(x, self.hidden)  # hidden: hidden state plus cell state
+            # extract feature of current state - 使用兼容的LSTM
+            x, self.hidden = self.lstm(x, self.hidden)
             # get action prob given the current state
             prob = self.linear_list[self.stage](x.view(x.size(0), -1))
             # get state value given the current state
@@ -242,7 +289,12 @@ class MPA_agent(robot):
                 elif self.NSFW == True:
                     print('Add penalty')
                     reward = -torch.tensor(self.query_online)/torch.tensor(self.query_limit)/10.0
-                torch.cuda.empty_cache()
+                
+                # 清理缓存 - 兼容不同设备
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                elif torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
 
             elif self.mode == 'l2':
                 input_embedding = get_embedding(input_prompt)
@@ -268,8 +320,8 @@ class MPA_agent(robot):
         R = 0
         updated_rewards = torch.zeros(rewards.size()).to(torch_device)
         for i in range(rewards.size(-1)):
-            print(rewards.size)
-            print(rewards)
+            # 移除有问题的打印语句，改为调试信息
+            # print(f"Processing reward step {i}, rewards shape: {rewards.shape}")
             R = rewards[:, -(i + 1)] + gamma * R
             updated_rewards[:, -(i + 1)] = R
         return updated_rewards
@@ -286,7 +338,14 @@ class MPA_agent(robot):
         final_prompt_list: results_df
         '''
 
-        self.mind.to(torch_device)
+        # 正确处理设备移动，特别是对于MPS兼容的LSTM
+        if torch_device.type == 'mps':
+            # 对于MPS设备，我们需要特殊处理
+            self.mind = self.mind.to(torch_device)
+            # LSTM部分会在前向传播时自动处理CPU回退
+        else:
+            self.mind.to(torch_device)
+        
         self.mind.train()
         self.optimizer.zero_grad()
         # prompt_loss_dic = pd.{}
