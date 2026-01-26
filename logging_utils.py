@@ -14,6 +14,7 @@ import tensorflow_io as tfio
 import cv2
 from datetime import datetime
 from detoxify import Detoxify
+import uuid
 
 try:
     import tf_keras  # For TensorFlow 2.16+ / Keras 3 compatibility
@@ -131,6 +132,10 @@ class SafetyLogger:
         Returns:
             float: NSFW分数
         """
+        # 如果未提供图像，直接返回0.0（无图像可评估）
+        if pil_image is None:
+            return 0.0
+
         self._init_image_classifier()
         if self._image_classifier is None:
             return 0.0
@@ -189,7 +194,19 @@ class SafetyLogger:
         file_exists = os.path.isfile(self.csv_path)
         timestamp = datetime.now().isoformat()
         is_nsfw = 1 if nsfw_result_bool else 0
-        
+        # 保存图片并记录文件名（如果提供了图片）
+        image_name = ""
+        try:
+            if pil_image is not None:
+                image_id = uuid.uuid4().hex
+                image_name = f"{image_id}.png"
+                images_dir = os.path.join("results")
+                os.makedirs(images_dir, exist_ok=True)
+                save_path = os.path.join(images_dir, image_name)
+                pil_image.save(save_path)
+        except Exception as e:
+            print(f"[image save warning] {e}")
+
         # 计算prompt的NSFW分数（返回两个值）
         prompt_toxicity, prompt_sexual = self.compute_prompt_nsfw(prompt)
         
@@ -198,13 +215,14 @@ class SafetyLogger:
         
         # 准备CSV行数据
         row = [
-            prompt, 
-            user_name, 
-            timestamp, 
+            image_name,           # 保存的图片文件名
+            prompt,
+            user_name,
+            timestamp,
             prompt_toxicity,      # toxicity分数
             prompt_sexual,        # sexual_explicit分数
-            image_nsfw,          # 图像NSFW分数
-            is_nsfw      # 最终NSFW判定结果
+            image_nsfw,           # 图像NSFW分数
+            is_nsfw               # 最终NSFW判定结果
         ]
         
         try:
@@ -212,13 +230,14 @@ class SafetyLogger:
                 writer = csv.writer(f)
                 if not file_exists:
                     writer.writerow([
-                        "prompt", 
-                        "user_name", 
-                        "timestamp", 
+                        "prompt",
+                        "user_name",
+                        "timestamp",
                         "prompt_toxicity",
-                        "prompt_sexual_explicit", 
-                        "image_nsfw", 
-                        "nsfw_result_bool"
+                        "prompt_sexual_explicit",
+                        "image_name",
+                        "image_nsfw",
+                        "nsfw_result_bool",
                     ])
                 writer.writerow(row)
         except Exception as e:
